@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cinematic Fire Engine | Dark Mode & Dynamic Lighting</title>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            overflow: hidden;
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform: scaleX(-1);
+        }
+
+        video {
+            display: none;
+        }
+
+        video {
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <video id="input_video"></video>
+    <canvas id="output_canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        let startTime = null;
+
+        let particles = [];
+        let smokeParticles = [];
+        let lightningBolts = [];
+
+        // State
+        let currentPower = 'fire_ice';
+        let lightningIntensity = 0;
+        let lastTip = { x: 0, y: 0, active: false };
+
+        // Intensity for each hand
+        let handIntensities = [0, 0];
+        let handSurges = [0, 0];
+        let lastHandOpenState = [false, false];
+
+        // Hand positions for steam effect
+        let handPositions = [{ x: 0, y: 0 }, { x: 0, y: 0 }]; // [0] = left, [1] = right
+        let indexTipPositions = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+        let smokeCooldown = 0;
+        let smokeOrbActive = false;
+        let smokeOrbStartTime = 0;
+        let smokeOrbX = 0;
+        let smokeOrbY = 0;
+
+        const HAND_CONNECTIONS = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
+
+        function spawnFire(x, y, isDrawing = false) {
+            if (!isDrawing && Math.random() > handIntensities[0]) return;
+            let count = isDrawing ? 2 : 1;
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    y: y + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    vx: isDrawing ? 0 : (Math.random() - 0.5) * 4,
+                    vy: isDrawing ? 0 : ((Math.random() * -10) - 4) - (handSurges[0] * 20),
+                    life: 1.0,
+                    decay: isDrawing ? 0.0055 : 0.06,
+                    size: isDrawing ? (Math.random() * 20 + 20) : (Math.random() * 22 + 8),
+                    type: 'fire'
+                });
+            }
+        }
+
+        function spawnIce(x, y, isDrawing = false) {
+            if (!isDrawing && Math.random() > handIntensities[1]) return;
+            let count = isDrawing ? 2 : 1;
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    y: y + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    vx: isDrawing ? 0 : (Math.random() - 0.5) * 4,
+                    vy: isDrawing ? 0 : ((Math.random() * -5) - 2) - (handSurges[1] * 15),
+                    life: 1.0,
+                    decay: isDrawing ? 0.0055 : 0.06,
+                    size: isDrawing ? (Math.random() * 20 + 20) : (Math.random() * 20 + 5),
+                    type: 'ice'
+                });
+            }
+        }
+
+        function spawnRed(x, y, isDrawing = false) {
+            if (!isDrawing && Math.random() > handIntensities[0]) return;
+            let count = isDrawing ? 2 : 1;
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    y: y + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    vx: isDrawing ? 0 : (Math.random() - 0.5) * 4,
+                    vy: isDrawing ? 0 : ((Math.random() * -10) - 4) - (handSurges[0] * 20),
+                    life: 1.0,
+                    decay: isDrawing ? 0.0055 : 0.06,
+                    size: isDrawing ? (Math.random() * 20 + 20) : (Math.random() * 22 + 8),
+                    type: 'red'
+                });
+            }
+        }
+
+        function spawnBlue(x, y, isDrawing = false) {
+            if (!isDrawing && Math.random() > handIntensities[1]) return;
+            let count = isDrawing ? 2 : 1;
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: x + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    y: y + (Math.random() - 0.5) * (isDrawing ? 10 : 15),
+                    vx: isDrawing ? 0 : (Math.random() - 0.5) * 4,
+                    vy: isDrawing ? 0 : ((Math.random() * -5) - 2) - (handSurges[1] * 15),
+                    life: 1.0,
+                    decay: isDrawing ? 0.0055 : 0.06,
+                    size: isDrawing ? (Math.random() * 20 + 20) : (Math.random() * 20 + 5),
+                    type: 'blue'
+                });
+            }
+        }
+
+        function spawnSmoke(x, y) {
+            for (let i = 0; i < 3; i++) {
+                smokeParticles.push({
+                    x: x + (Math.random() - 0.5) * 26,
+                    y: y + (Math.random() - 0.5) * 26,
+                    vx: (Math.random() - 0.5) * 1.0,
+                    vy: -0.8 - Math.random() * 1.0,
+                    life: 0.9,
+                    decay: 0.016,
+                    size: Math.random() * 34 + 20
+                });
+            }
+        }
+
+        function explodeSmoke(x, y) {
+            for (let i = 0; i < 28; i++) {
+                smokeParticles.push({
+                    x: x + (Math.random() - 0.5) * 54,
+                    y: y + (Math.random() - 0.5) * 54,
+                    vx: (Math.random() - 0.5) * 2.8,
+                    vy: -1.8 - Math.random() * 2.8,
+                    life: 1.0,
+                    decay: 0.014,
+                    size: Math.random() * 50 + 28
+                });
+            }
+        }
+
+        function spawnLightning(x, y) {
+            if (Math.random() > lightningIntensity) return;
+            const bolt = [];
+            let cx = x;
+            let cy = y;
+            for (let i = 0; i < 25; i++) {
+                bolt.push({ x: cx, y: cy });
+                cx += (Math.random() - 0.5) * 80;
+                cy += (Math.random() - 0.8) * 80;
+            }
+            lightningBolts.push({
+                path: bolt,
+                life: 1.0,
+                color: Math.random() > 0.5 ? '#e0ffff' : '#00bfff'
+            });
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === '1') currentPower = 'fire_ice';
+            if (e.key === '2') currentPower = 'lightning';
+            if (e.key === '3') currentPower = 'red_blue';
+        });
+
+        const pointingState = {
+            left: { frames: 0, active: false, lastWrist: null },
+            right: { frames: 0, active: false, lastWrist: null }
+        };
+
+        function isPinchingInternal(landmarks, state) {
+            const thumb = landmarks[4];
+            const index = landmarks[8];
+            const wrist = landmarks[0];
+
+            let velocity = 0;
+            if (state.lastWrist) {
+                velocity = Math.hypot(wrist.x - state.lastWrist.x, wrist.y - state.lastWrist.y);
+            }
+            state.lastWrist = { x: wrist.x, y: wrist.y };
+
+            if (velocity > 0.05) return false;
+
+            const fingers = [12, 16, 20];
+            const pips = [10, 14, 18];
+
+            let openCount = 0;
+            for (let i = 0; i < 3; i++) {
+                const tip = landmarks[fingers[i]];
+                const pip = landmarks[pips[i]];
+                const dTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+                const dPip = Math.hypot(pip.x - wrist.x, pip.y - wrist.y);
+                if (dTip > dPip) openCount++;
+            }
+
+            if (openCount < 2) return false;
+
+            const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+            const midPip = landmarks[9];
+            const handSize = Math.hypot(midPip.x - wrist.x, midPip.y - wrist.y);
+
+            return pinchDist < handSize * 0.35;
+        }
+
+        function isPinching(landmarks, isRightHand) {
+            const state = isRightHand ? pointingState.right : pointingState.left;
+            const raw = isPinchingInternal(landmarks, state);
+
+            if (raw) {
+                state.frames = 5;
+                state.active = true;
+            } else {
+                state.frames--;
+                if (state.frames <= 0) state.active = false;
+            }
+            return state.active;
+        }
+
+        function isHandOpen(landmarks) {
+            let open = 0;
+            const wrist = landmarks[0];
+            const tips = [8, 12, 16, 20];
+            const pips = [6, 10, 14, 18];
+            for (let i = 0; i < tips.length; i++) {
+                const tip = landmarks[tips[i]];
+                const pip = landmarks[pips[i]];
+                const dTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+                const dPip = Math.hypot(pip.x - wrist.x, pip.y - wrist.y);
+                if (dTip > dPip) open++;
+            }
+            return open >= 3;
+        }
+
+        function isIndexPointing(landmarks) {
+            const wrist = landmarks[0];
+            const indexTip = landmarks[8];
+            const indexPip = landmarks[6];
+            const thumb = landmarks[4];
+            
+            // İşaret parmağı açık/uzatılmış mı?
+            const dIndexTip = Math.hypot(indexTip.x - wrist.x, indexTip.y - wrist.y);
+            const dIndexPip = Math.hypot(indexPip.x - wrist.x, indexPip.y - wrist.y);
+            
+            if (dIndexTip <= dIndexPip) return false; // İşaret parmağı kapalıysa false
+            
+            // Başparmak + işaret parmağı birleşip pinch yapıyor mu? (bu durumda false)
+            const pinchDist = Math.hypot(thumb.x - indexTip.x, thumb.y - indexTip.y);
+            const handSize = Math.hypot(landmarks[9].x - wrist.x, landmarks[9].y - wrist.y);
+            
+            if (pinchDist < handSize * 0.4) return false; // Pinch yapıyorsa false
+            
+            return true;
+        }
+
+        function onResults(results) {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+
+            if (!startTime) startTime = Date.now();
+
+            canvasCtx.save();
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            canvasCtx.globalCompositeOperation = 'multiply';
+            const darkAlpha = 0.5;
+            canvasCtx.fillStyle = `rgba(10, 5, 0, ${darkAlpha})`;
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.globalCompositeOperation = 'source-over';
+
+            if (smokeCooldown > 0) {
+                smokeCooldown--;
+            }
+
+            if (smokeOrbActive && Date.now() - smokeOrbStartTime >= 2000) {
+                explodeSmoke(smokeOrbX, smokeOrbY);
+                smokeOrbActive = false;
+                smokeCooldown = 20;
+            }
+
+            if (results.multiHandLandmarks) {
+                indexTipPositions = [{ x: 0, y: 0 }, { x: 0, y: 0 }];
+
+                let anyHandOpen = false;
+                results.multiHandLandmarks.forEach((landmarks) => {
+                    if (isHandOpen(landmarks)) anyHandOpen = true;
+                });
+
+                if (currentPower === 'lightning') {
+                    lightningIntensity += anyHandOpen ? 0.08 : -0.05;
+                } else {
+                    lightningIntensity -= 0.1;
+                }
+                lightningIntensity = Math.max(0, Math.min(1, lightningIntensity));
+
+                if (lightningIntensity > 0.01) {
+                    if (Math.random() < 0.5 * lightningIntensity) {
+                        canvasCtx.fillStyle = `rgba(200, 220, 255, ${0.25 * lightningIntensity})`;
+                        canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+                    }
+
+                    results.multiHandLandmarks.forEach((landmarks) => {
+                        if (!isHandOpen(landmarks)) return;
+
+                        const tips = [4, 8, 12, 16, 20];
+                        tips.forEach(tipIdx => {
+                            const pt = landmarks[tipIdx];
+                            if (Math.random() < 0.07) spawnLightning(pt.x * canvasElement.width, pt.y * canvasElement.height);
+                        });
+
+                        HAND_CONNECTIONS.forEach(([s, e]) => {
+                            if (Math.random() < 0.005) {
+                                const start = landmarks[s];
+                                spawnLightning(start.x * canvasElement.width, start.y * canvasElement.height);
+                            }
+                        });
+                    });
+                }
+
+                // Process each hand
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    const label = results.multiHandedness[index].label;
+                    const isRightHand = label === 'Right';
+                    const targetIndex = isRightHand ? 1 : 0;
+
+                    const palm = landmarks[9];
+                    const indexTip = landmarks[8];
+                    handPositions[targetIndex] = {
+                        x: palm.x * canvasElement.width,
+                        y: palm.y * canvasElement.height
+                    };
+                    indexTipPositions[targetIndex] = {
+                        x: indexTip.x * canvasElement.width,
+                        y: indexTip.y * canvasElement.height
+                    };
+
+                    const isOpen = isHandOpen(landmarks);
+                    const isPinch = isPinching(landmarks, isRightHand);
+
+                    if (currentPower === 'fire_ice' || currentPower === 'red_blue') {
+                        handIntensities[targetIndex] += (isOpen || isPinch) ? 0.05 : -0.15;
+
+                        if (isOpen && !lastHandOpenState[targetIndex]) {
+                            handSurges[targetIndex] = 1.0;
+                        }
+                    } else {
+                        handIntensities[targetIndex] -= 0.15;
+                    }
+                    lastHandOpenState[targetIndex] = isOpen;
+
+                    handSurges[targetIndex] *= 0.92;
+                    if (handSurges[targetIndex] < 0.01) handSurges[targetIndex] = 0;
+
+                    handIntensities[targetIndex] = Math.max(0, Math.min(1, handIntensities[targetIndex]));
+
+                    // İşaret parmağı çizim kontrolü
+                    if (isIndexPointing(landmarks)) {
+                        const indexTip = landmarks[8];
+                        const tx = indexTip.x * canvasElement.width;
+                        const ty = indexTip.y * canvasElement.height;
+
+                        if (currentPower === 'red_blue') {
+                            if (!isRightHand) spawnRed(tx, ty, true);
+                            else spawnBlue(tx, ty, true);
+                        } else if (currentPower === 'fire_ice') {
+                            if (!isRightHand) spawnFire(tx, ty, true);
+                            else spawnIce(tx, ty, true);
+                        }
+                    }
+
+                    const intensity = handIntensities[targetIndex];
+                    if (intensity <= 0.01) return;
+
+                    const lx = palm.x * canvasElement.width;
+                    const ly = palm.y * canvasElement.height;
+
+                    if (isPinch) {
+                        const indexTip = landmarks[8];
+                        const thumbTip = landmarks[4];
+
+                        const tx = ((indexTip.x + thumbTip.x) / 2) * canvasElement.width;
+                        const ty = ((indexTip.y + thumbTip.y) / 2) * canvasElement.height;
+
+                        if (currentPower === 'red_blue') {
+                            if (!isRightHand) spawnRed(tx, ty, true);
+                            else spawnBlue(tx, ty, true);
+                        } else if (currentPower === 'fire_ice') {
+                            const elapsed = Date.now() - startTime;
+                            if (elapsed > 10000) {
+                                if (!isRightHand) spawnFire(tx, ty, true);
+                                else spawnIce(tx, ty, true);
+                            }
+                        }
+                    }
+
+                    if (currentPower === 'red_blue') {
+                        if (!isRightHand) {
+                            let flicker = Math.sin(Date.now() * 0.02) * 25;
+                            let redGlow = canvasCtx.createRadialGradient(lx, ly, 0, lx, ly, 550 + flicker);
+
+                            redGlow.addColorStop(0, `rgba(255, 0, 0, ${0.65 * intensity})`);
+                            redGlow.addColorStop(0.5, `rgba(200, 0, 0, ${0.28 * intensity})`);
+                            redGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                            canvasCtx.globalCompositeOperation = 'screen';
+                            canvasCtx.fillStyle = redGlow;
+                            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+                            landmarks.forEach(pt => spawnRed(pt.x * canvasElement.width, pt.y * canvasElement.height));
+                            HAND_CONNECTIONS.forEach(([s, e]) => {
+                                const start = landmarks[s];
+                                const end = landmarks[e];
+                                spawnRed(((start.x + end.x) / 2) * canvasElement.width, ((start.y + end.y) / 2) * canvasElement.height);
+                            });
+                        } else {
+                            let flicker = Math.sin(Date.now() * 0.01) * 20;
+                            let blueGlow = canvasCtx.createRadialGradient(lx, ly, 0, lx, ly, 400 + flicker);
+
+                            blueGlow.addColorStop(0, `rgba(0, 0, 255, ${0.6 * intensity})`);
+                            blueGlow.addColorStop(0.5, `rgba(0, 50, 255, ${0.22 * intensity})`);
+                            blueGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                            canvasCtx.globalCompositeOperation = 'screen';
+                            canvasCtx.fillStyle = blueGlow;
+                            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+                            landmarks.forEach(pt => spawnBlue(pt.x * canvasElement.width, pt.y * canvasElement.height));
+                            HAND_CONNECTIONS.forEach(([s, e]) => {
+                                const start = landmarks[s];
+                                const end = landmarks[e];
+                                spawnBlue(((start.x + end.x) / 2) * canvasElement.width, ((start.y + end.y) / 2) * canvasElement.height);
+                            });
+                        }
+                    } else if (currentPower === 'fire_ice') {
+                        if (!isRightHand) {
+                            let flicker = Math.sin(Date.now() * 0.02) * 25;
+                            let heatGlow = canvasCtx.createRadialGradient(lx, ly, 0, lx, ly, 550 + flicker);
+
+                            heatGlow.addColorStop(0, `rgba(255, 60, 0, ${0.7 * intensity})`);
+                            heatGlow.addColorStop(0.5, `rgba(255, 30, 0, ${0.3 * intensity})`);
+                            heatGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                            canvasCtx.globalCompositeOperation = 'screen';
+                            canvasCtx.fillStyle = heatGlow;
+                            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+                            landmarks.forEach(pt => spawnFire(pt.x * canvasElement.width, pt.y * canvasElement.height));
+                            HAND_CONNECTIONS.forEach(([s, e]) => {
+                                const start = landmarks[s];
+                                const end = landmarks[e];
+                                spawnFire(((start.x + end.x) / 2) * canvasElement.width, ((start.y + end.y) / 2) * canvasElement.height);
+                            });
+
+                            // Fingertips'ten yoğun particle spawn
+                            const fingertipsFire = [4, 8, 12, 16, 20];
+                            fingertipsFire.forEach(idx => {
+                                const pt = landmarks[idx];
+                                for (let i = 0; i < 3; i++) {
+                                    spawnFire(pt.x * canvasElement.width, pt.y * canvasElement.height);
+                                }
+                            });
+                        } else {
+                            let flicker = Math.sin(Date.now() * 0.01) * 20;
+                            let coldGlow = canvasCtx.createRadialGradient(lx, ly, 0, lx, ly, 400 + flicker);
+
+                            coldGlow.addColorStop(0, `rgba(100, 200, 255, ${0.6 * intensity})`);
+                            coldGlow.addColorStop(0.5, `rgba(0, 100, 255, ${0.22 * intensity})`);
+                            coldGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                            canvasCtx.globalCompositeOperation = 'screen';
+                            canvasCtx.fillStyle = coldGlow;
+                            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+                            landmarks.forEach(pt => spawnIce(pt.x * canvasElement.width, pt.y * canvasElement.height));
+                            HAND_CONNECTIONS.forEach(([s, e]) => {
+                                const start = landmarks[s];
+                                const end = landmarks[e];
+                                spawnIce(((start.x + end.x) / 2) * canvasElement.width, ((start.y + end.y) / 2) * canvasElement.height);
+                            });
+
+                            // Fingertips'ten yoğun particle spawn
+                            const fingertipsIce = [4, 8, 12, 16, 20];
+                            fingertipsIce.forEach(idx => {
+                                const pt = landmarks[idx];
+                                for (let i = 0; i < 3; i++) {
+                                    spawnIce(pt.x * canvasElement.width, pt.y * canvasElement.height);
+                                }
+                            });
+                        }
+                    }
+                });
+
+                // Smoke effect: only between index fingertips
+                if (results.multiHandLandmarks.length === 2 && indexTipPositions[0].x > 0 && indexTipPositions[1].x > 0) {
+                    const indexDistance = Math.hypot(
+                        indexTipPositions[0].x - indexTipPositions[1].x,
+                        indexTipPositions[0].y - indexTipPositions[1].y
+                    );
+
+                    const midX = (indexTipPositions[0].x + indexTipPositions[1].x) / 2;
+                    const midY = ((indexTipPositions[0].y + indexTipPositions[1].y) / 2) - 60;
+
+                    if (!smokeOrbActive && indexDistance < 80 && smokeCooldown <= 0) {
+                        smokeOrbActive = true;
+                        smokeOrbStartTime = Date.now();
+                        smokeOrbX = midX;
+                        smokeOrbY = midY;
+                    }
+
+                    if (smokeOrbActive) {
+                        if (indexDistance < 80) {
+                            smokeOrbX = midX;
+                            smokeOrbY = midY;
+                        }
+
+                        const smokeOrbElapsed = Date.now() - smokeOrbStartTime;
+                        const smokeOrbGrowth = smokeOrbElapsed > 1200 ? 2 : 1;
+                        for (let i = 0; i < smokeOrbGrowth; i++) {
+                            spawnSmoke(smokeOrbX, smokeOrbY);
+                        }
+                    }
+                }
+
+                if (smokeOrbActive && Date.now() - smokeOrbStartTime >= 1000) {
+                    explodeSmoke(smokeOrbX, smokeOrbY);
+                    smokeOrbActive = false;
+                    smokeCooldown = 20;
+                }
+            }
+
+            if (particles.length > 900) {
+                particles = particles.slice(-900);
+            }
+
+            if (smokeParticles.length > 120) {
+                smokeParticles = smokeParticles.slice(-120);
+            }
+
+            canvasCtx.globalCompositeOperation = 'lighter';
+
+            // Update and render particles
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= (p.decay || 0.06);
+
+                if (p.life > 0) {
+                    let gradient = canvasCtx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+
+                    if (p.type === 'ice') {
+                        gradient.addColorStop(0, `rgba(255, 255, 255, ${p.life})`);
+                        gradient.addColorStop(0.3, `rgba(180, 240, 255, ${p.life * 0.8})`);
+                        gradient.addColorStop(0.6, `rgba(0, 150, 255, ${p.life * 0.4})`);
+                    } else if (p.type === 'red') {
+                        gradient.addColorStop(0, `rgba(255, 200, 200, ${p.life})`);
+                        gradient.addColorStop(0.3, `rgba(255, 0, 0, ${p.life * 0.8})`);
+                        gradient.addColorStop(0.6, `rgba(100, 0, 0, ${p.life * 0.4})`);
+                    } else if (p.type === 'blue') {
+                        gradient.addColorStop(0, `rgba(200, 200, 255, ${p.life})`);
+                        gradient.addColorStop(0.3, `rgba(0, 0, 255, ${p.life * 0.8})`);
+                        gradient.addColorStop(0.6, `rgba(0, 0, 100, ${p.life * 0.4})`);
+                    } else {
+                        gradient.addColorStop(0, `rgba(255, 255, 220, ${p.life})`);
+                        gradient.addColorStop(0.2, `rgba(255, 180, 0, ${p.life * 0.8})`);
+                        gradient.addColorStop(0.5, `rgba(255, 40, 0, ${p.life * 0.4})`);
+                    }
+                    gradient.addColorStop(1, `rgba(0, 0, 0, 0)`);
+                    gradient.addColorStop(1, `rgba(0, 0, 0, 0)`);
+
+                    canvasCtx.fillStyle = gradient;
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                    canvasCtx.fill();
+                }
+            }
+            particles = particles.filter(p => p.life > 0);
+
+            for (let i = 0; i < smokeParticles.length; i++) {
+                const p = smokeParticles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= p.decay;
+
+                if (p.life <= 0) continue;
+
+                const gradient = canvasCtx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
+                gradient.addColorStop(0, `rgba(240, 240, 240, ${p.life * 0.25})`);
+                gradient.addColorStop(0.35, `rgba(220, 220, 220, ${p.life * 0.18})`);
+                gradient.addColorStop(0.7, `rgba(170, 170, 170, ${p.life * 0.08})`);
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+                canvasCtx.save();
+                canvasCtx.globalCompositeOperation = 'lighter';
+                canvasCtx.fillStyle = gradient;
+                canvasCtx.beginPath();
+                canvasCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                canvasCtx.fill();
+                canvasCtx.restore();
+            }
+            smokeParticles = smokeParticles.filter(p => p.life > 0);
+
+            // Draw Lightning Bolts
+            for (let i = 0; i < lightningBolts.length; i++) {
+                const b = lightningBolts[i];
+                b.life -= 0.1;
+                
+                if (b.life > 0) {
+                    if (b.path.length === 0) continue;
+
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(b.path[0].x, b.path[0].y);
+                    for (let j = 1; j < b.path.length; j++) {
+                        canvasCtx.lineTo(b.path[j].x, b.path[j].y);
+                    }
+
+                    canvasCtx.save();
+                    canvasCtx.globalCompositeOperation = 'lighter';
+                    canvasCtx.strokeStyle = b.color;
+                    canvasCtx.lineWidth = 20;
+                    canvasCtx.globalAlpha = b.life * 0.3;
+                    canvasCtx.shadowBlur = 30;
+                    canvasCtx.shadowColor = b.color;
+                    canvasCtx.stroke();
+                    canvasCtx.restore();
+
+                    canvasCtx.save();
+                    canvasCtx.globalCompositeOperation = 'lighter';
+                    canvasCtx.strokeStyle = b.color;
+                    canvasCtx.lineWidth = 8;
+                    canvasCtx.globalAlpha = b.life * 0.6;
+                    canvasCtx.stroke();
+                    canvasCtx.restore();
+
+                    canvasCtx.save();
+                    canvasCtx.globalCompositeOperation = 'source-over';
+                    canvasCtx.strokeStyle = '#ffffff';
+                    canvasCtx.lineWidth = 2;
+                    canvasCtx.globalAlpha = b.life;
+                    canvasCtx.stroke();
+                    canvasCtx.restore();
+                }
+            }
+            lightningBolts = lightningBolts.filter(b => b.life > 0);
+
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.65,
+            minTrackingConfidence: 0.65
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({ image: videoElement });
+            },
+            width: 1280,
+            height: 720
+        });
+        camera.start();
+    </script>
+</body>
+
+</html>
